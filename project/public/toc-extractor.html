@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Extract Table of Contents</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #f4f4f9;
+    }
+
+    .container {
+      text-align: center;
+      background: #fff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      width: 90%;
+      max-width: 800px;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      color: #333;
+    }
+
+    .status {
+      margin: 20px 0;
+      padding: 10px;
+      border-radius: 4px;
+      background-color: #e3f2fd;
+      color: #1976d2;
+    }
+
+    button {
+      padding: 10px 20px;
+      background-color: #28a745;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin-right: 10px;
+    }
+
+    button:hover {
+      background-color: #218838;
+    }
+
+    #result {
+      margin-top: 20px;
+      text-align: left;
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 10px;
+      background-color: #f9f9f9;
+    }
+
+    .notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 12px 24px;
+      background-color: #4caf50;
+      color: white;
+      border-radius: 4px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      opacity: 0;
+      transition: opacity 0.3s ease-in-out;
+    }
+
+    .notification.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Ekstrak Daftar Isi dari PDF</h1>
+    <div class="status">Memproses PDF...</div>
+    <div id="result"></div>
+    <button id="copyButton" style="display: none;">Salin Daftar Isi</button>
+  </div>
+
+  <div id="notification" class="notification">
+    Daftar isi berhasil disalin ke clipboard!
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    const resultDiv = document.getElementById('result');
+    const copyButton = document.getElementById('copyButton');
+    const statusDiv = document.querySelector('.status');
+    const notification = document.getElementById('notification');
+
+    window.addEventListener('message', async (event) => {
+      if (event.data.type === 'pdf-data') {
+        try {
+          statusDiv.textContent = 'Mengekstrak daftar isi...';
+          const pdfBlob = event.data.data;
+          const pdfData = await loadPDF(pdfBlob);
+          const tableOfContents = extractTableOfContents(pdfData);
+          displayTableOfContents(tableOfContents);
+          statusDiv.style.display = 'none';
+        } catch (error) {
+          statusDiv.textContent = 'Error: ' + error.message;
+          statusDiv.style.backgroundColor = '#ffebee';
+          statusDiv.style.color = '#c62828';
+        }
+      }
+    });
+
+    function showNotification() {
+      notification.classList.add('show');
+      setTimeout(() => {
+        notification.classList.remove('show');
+      }, 3000);
+    }
+
+    copyButton.addEventListener('click', () => {
+      const textToCopy = Array.from(resultDiv.querySelectorAll('p'))
+        .map(p => p.textContent)
+        .join('\n');
+
+      navigator.clipboard.writeText(textToCopy)
+        .then(() => {
+          showNotification();
+        })
+        .catch(err => {
+          console.error('Gagal menyalin teks: ', err);
+          statusDiv.textContent = 'Gagal menyalin teks. Silakan coba lagi.';
+          statusDiv.style.backgroundColor = '#ffebee';
+          statusDiv.style.color = '#c62828';
+          statusDiv.style.display = 'block';
+        });
+    });
+
+    async function loadPDF(blob) {
+      const arrayBuffer = await blob.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const numPages = pdf.numPages;
+      const pagesText = [];
+
+      for (let i = 1; i <= numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join('\n');
+        pagesText.push(pageText);
+      }
+
+      return pagesText;
+    }
+
+    function extractTableOfContents(pagesText) {
+      const tableOfContents = [];
+      const seenHeadings = new Set();
+      const babPattern = /Bab \d+[:\s]?.*/gi;
+      const subbabPattern = /\d+\.\d+[:\s]?.*/gi;
+      const specialSectionPattern = /(Kata Pengantar|Daftar Isi)/gi;
+      const romanNumerals = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
+      let pageCounter = 0;
+      let isMainContentStarted = false;
+      let romanIndex = 0;
+
+      pagesText.forEach((text, pageIndex) => {
+        if (!isMainContentStarted && /Bab 1/i.test(text)) {
+          isMainContentStarted = true;
+          pageCounter = 1;
+        }
+
+        const lines = text.split('\n');
+        lines.forEach(line => {
+          const specialMatch = line.match(specialSectionPattern);
+          if (specialMatch) {
+            const specialHeading = specialMatch[0].trim();
+            if (!seenHeadings.has(specialHeading)) {
+              const romanPage = romanNumerals[romanIndex] || String(romanIndex + 1);
+              tableOfContents.push(`${specialHeading} - Halaman ${romanPage}`);
+              seenHeadings.add(specialHeading);
+              romanIndex++;
+            }
+          }
+
+          const babMatch = line.match(babPattern);
+          if (babMatch) {
+            const babHeading = babMatch[0].trim();
+            if (!seenHeadings.has(babHeading)) {
+              const nextLine = lines[lines.indexOf(line) + 1];
+              const babTitle = nextLine ? nextLine.trim() : '';
+              const formattedBab = `BAB ${tableOfContents.length + 1} : ${babTitle}`;
+              if (isMainContentStarted) {
+                tableOfContents.push(`${formattedBab} - Halaman ${pageCounter}`);
+                seenHeadings.add(babHeading);
+              }
+            }
+          }
+
+          const subbabMatch = line.match(subbabPattern);
+          if (subbabMatch) {
+            const subbabHeading = subbabMatch[0].trim();
+            if (!seenHeadings.has(subbabHeading) && isMainContentStarted) {
+              tableOfContents.push(`${subbabHeading} - Halaman ${pageCounter}`);
+              seenHeadings.add(subbabHeading);
+            }
+          }
+        });
+
+        if (isMainContentStarted) {
+          pageCounter++;
+        }
+      });
+
+      return tableOfContents;
+    }
+
+    function displayTableOfContents(tableOfContents) {
+      if (tableOfContents.length === 0) {
+        resultDiv.innerHTML = '<p>Tidak ada daftar isi yang ditemukan.</p>';
+        return;
+      }
+
+      const content = tableOfContents.map(entry => `<p>${entry}</p>`).join('');
+      resultDiv.innerHTML = `<h3>Daftar Isi:</h3>${content}`;
+      copyButton.style.display = 'inline-block';
+    }
+  </script>
+</body>
+</html>
